@@ -14,10 +14,9 @@ The highway's waypoints loop around so the frenet s value, distance along the ro
 
 ## Basic Build Instructions
 
-1. Clone this repo.
-2. Make a build directory: `mkdir build && cd build`
-3. Compile: `cmake .. && make`
-4. Run it: `./path_planning`.
+1. cd build
+2. Compile: `cmake .. && make`
+3. Run it: `./path_planning`.
 
 Here is the data provided from the Simulator to the C++ Program
 
@@ -56,13 +55,33 @@ the path has processed since last time.
 
 ## Details
 
-1. The car uses a perfect controller and will visit every (x,y) point it recieves in the list every .02 seconds. The units for the (x,y) points are in meters and the spacing of the points determines the speed of the car. The vector going from a point to the next point in the list dictates the angle of the car. Acceleration both in the tangential and normal directions is measured along with the jerk, the rate of change of total Acceleration. The (x,y) point paths that the planner recieves should not have a total acceleration that goes over 10 m/s^2, also the jerk should not go over 50 m/s^3. (NOTE: As this is BETA, these requirements might change. Also currently jerk is over a .02 second interval, it would probably be better to average total acceleration over 1 second and measure jerk from that.
+1. The car uses a perfect controller and will visit every (x,y) point it recieves in the list every .02 seconds. The units for the (x,y) points are in meters and the spacing of the points determines the speed of the car. The vector going from a point to the next point in the list dictates the angle of the car. Acceleration both in the tangential and normal directions is measured along with the jerk, the rate of change of total Acceleration. The (x,y) point paths that the planner receives should not have a total acceleration that goes over 10 m/s^2, also the jerk should not go over 50 m/s^3. (NOTE: As this is BETA, these requirements might change. Also currently jerk is over a .02 second interval, it would probably be better to average total acceleration over 1 second and measure jerk from that.
 
 2. There will be some latency between the simulator running and the path planner returning a path, with optimized code usually its not very long maybe just 1-3 time steps. During this delay the simulator will continue using points that it was last given, because of this its a good idea to store the last points you have used so you can have a smooth transition. previous_path_x, and previous_path_y can be helpful for this transition since they show the last points given to the simulator controller with the processed points already removed. You would either return a path that extends this previous path or make sure to create a new path that has a smooth transition with this last path.
 
-## Tips
+## Implementation
 
-A really helpful resource for doing this project and creating smooth trajectories was using http://kluge.in-chemnitz.de/opensource/spline/, the spline function is in a single hearder file is really easy to use.
+The code consists of two parts: Perception or sensor fusion part and Planning trajectory part.
+
+1. Perception part is responsible for environments awareness. In other words, the perceived information about each vehicle on the road is used to determine the next actions. From this information, the availability of the ego lane and the others lane can be obtained. The car starts to move on its lane and during every cycle it checks the state of its own lane and the other lanes as follows,
+* Check if the ego lane is available (no car ahead at specific distance)
+* If the ego lane is unavailable, Check the availability of the left lane.
+* Move to the left lane is it is available, otherwise check the availability of the right lane.
+* Move to the right lane if it available, otherwise keep the ego lane and decrease the velocity.
+* There should a certain distance between the car and the front car and the car in behind to do certain action.
+* This distance can be adjusted using the parameters (points_space).
+* The priority is to move fast enough and to keep the car at the center lane.
+* If the ego lane is not the center lane, the vehicles starts to try to make a lane changing to the center one.
+* The boundaries are the most left lane and the most right lane.
+
+2. Planning trajectory is the part that is responsible for updating the way-points for the vehicle to follow. It involves the following steps:
+* use the last way points and based on the current lane, the current s and the current d, predict some way points (5 points) at distances with step equal to the value of points_space variable (30 in my code).
+* Use spline tool to fit these points to a polynomial.
+* sample from this polynomial the true way-points based on the current velocity and the desired distance based on 0.02 s updating rate in fernet coordinates.
+*  Transform the way-points from Fernet coordinates to road (x,y) coordinates.
+* Publish these transformed points.
+
+3. Acceleration (break down) with a value of 0.224 was used to avoid Jerk for comfortable driving. 
 
 ---
 
