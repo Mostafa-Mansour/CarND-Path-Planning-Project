@@ -14,7 +14,7 @@ The highway's waypoints loop around so the frenet s value, distance along the ro
 
 ## Basic Build Instructions
 
-1. cd build
+1. mkdir build && cd build
 2. Compile: `cmake .. && make`
 3. Run it: `./path_planning`.
 
