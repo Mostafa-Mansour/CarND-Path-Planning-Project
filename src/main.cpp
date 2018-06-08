@@ -8,6 +8,7 @@
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
+#include "spline.h"
 
 using namespace std;
 
@@ -200,7 +201,12 @@ int main() {
   	map_waypoints_dy.push_back(d_y);
   }
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  // starting at lane 1
+  int lane=1;
+
+  double current_vel=0;  // in mph
+
+  h.onMessage([&current_vel,&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&lane](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -244,7 +250,310 @@ int main() {
 
 
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
-          	msgJson["next_x"] = next_x_vals;
+          	
+            int prev_size=previous_path_x.size();
+            int points_space=30;
+
+            // __________________________________________________________SENSOR_FUSION_PART_________________________________________________________//
+            if(prev_size>0){
+              car_s=end_path_s;
+            }
+
+            bool too_close=false;
+
+            // Params for analysing the other vehicels
+            bool car_ahead=false;
+            bool car_at_left=false;
+            bool car_at_right=false;
+
+
+            // Perception part
+            for(int i=0; i<sensor_fusion.size();i++){
+
+              float d=sensor_fusion[i][6];  // get the lane of every care
+              int temp_lane=-1;
+              // check of the car in our lane
+              if(d>0 && d<4){
+                temp_lane=0;
+              }
+              else if(d>4 && d<8){
+                temp_lane=1;
+              }
+              else if(d>8 && d<12){
+                temp_lane=2;
+              }
+
+              if(temp_lane<0){
+                continue;
+              }
+              
+              double vx=sensor_fusion[i][3]; // get the other car velcoity
+              double vy=sensor_fusion[i][4];
+
+              double check_speed=sqrt(vx*vx + vy*vy);
+              double check_car_s=sensor_fusion[i][5];
+
+              check_car_s+=(double)prev_size*0.02*check_speed;
+              
+              // check the car in our lane
+              if(temp_lane==lane){
+                car_ahead |= check_car_s>car_s && check_car_s-car_s<points_space;
+              }
+              // check the car at the left lane
+               else if (temp_lane-lane==-1){
+                car_at_left|=car_s-points_space < check_car_s && car_s+points_space>check_car_s;
+               }
+
+               // check the car at the right
+               else if (temp_lane-lane==1){
+                car_at_right|=car_s-points_space < check_car_s && car_s+points_space>check_car_s;
+               }
+             }
+
+               double speed_diff=0;
+               double MAX_VEL=49.5;
+               double MAX_ACC=0.224;
+
+               // there is a car ahead
+               if(car_ahead){
+                  // at left is empty
+                  if(!car_at_left && lane >0){
+                    lane-=1;
+                  }
+                  // at right is empty
+                  else if(!car_at_right && lane<2){
+                    lane+=1;
+                  }
+                  else{
+                    speed_diff-=MAX_ACC;
+                  }
+
+               }
+               else{
+                // check in which lane we are and change it back to the center lane (lane 1)
+                if (lane!=1){
+                  if((lane==0 && !car_at_right)|| (lane==2 && !car_at_left)){
+                    lane=1;
+                  }
+
+                }
+                if(current_vel<MAX_VEL){
+                  speed_diff+=MAX_ACC;
+                }
+
+               }
+
+               // Lane changing or lane keeping
+
+                /*too_close=true;
+
+                if(lane==1){
+
+                  // check for turning left first
+                  vector<double> left_s;
+                  for(int i=0;i<sensor_fusion.size();i++){
+                    d=sensor_fusion[i][6];
+
+                  }
+                  lane=0;
+                }*/
+
+
+
+
+              
+
+              
+            
+
+            /*
+            if(too_close){
+              current_vel-=0.224;
+             }
+             else if(current_vel<49.5){
+              current_vel+=0.224;
+             }*/
+            
+            // ____________________________________________________________WAYPOINTS_UPDATE_PART_____________________________________________________//
+
+            // create a vector of (x,y) points. These points are around 30 points
+            // These points are fitted to a polynomial using spline later
+            
+            vector<double> pts_x;
+            vector<double> pts_y;
+          
+            // get car ego- states
+            double ref_x=car_x;
+            double ref_y=car_y;
+            double ref_yaw=deg2rad(car_yaw);
+
+            // initializing the path
+            if(prev_size<2){
+              double prev_car_x=car_x-cos(car_yaw);
+              double prev_car_y=car_y-sin(car_yaw);
+              pts_x.push_back(prev_car_x);
+              pts_y.push_back(prev_car_y);
+
+              pts_x.push_back(car_x);
+              pts_y.push_back(car_y);
+            }
+
+            // if arleady the path is initialized
+
+            else{
+
+              ref_x=previous_path_x[prev_size-1];
+              ref_y=previous_path_y[prev_size-1];
+
+              double ref_x_previous=previous_path_x[prev_size-2];
+              double ref_y_previous=previous_path_y[prev_size-2];
+
+              // getting car orientation between the last two points in the path
+              ref_yaw=atan2(ref_y-ref_y_previous,ref_x-ref_x_previous);
+
+              // use the last two points to make the path tanget to the previous path end point for smoothing
+              pts_x.push_back(ref_x_previous);
+              pts_x.push_back(ref_x);
+
+              pts_y.push_back(ref_y_previous);
+              pts_y.push_back(ref_y);
+
+            }
+
+            // add spaced points with value points_space
+            //int points_space=30;
+
+            vector<double> next_wp0=getXY(car_s+points_space,(2+4*lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+            vector<double> next_wp1=getXY(car_s+2*points_space,(2+4*lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+            vector<double> next_wp2=getXY(car_s+3*points_space,(2+4*lane),map_waypoints_s,map_waypoints_x,map_waypoints_y);
+
+            // add these points to the path
+            pts_x.push_back(next_wp0[0]);
+            pts_x.push_back(next_wp1[0]);
+            pts_x.push_back(next_wp2[0]);
+
+            pts_y.push_back(next_wp0[1]);
+            pts_y.push_back(next_wp1[1]);
+            pts_y.push_back(next_wp2[1]);
+
+            // transform the points from the world (road) coordinate frame to the car coordinate frame
+
+            for (int i=0;i<pts_x.size();i++){
+
+             
+              // Shifting and rotaion
+
+              double shift_x=pts_x[i]-ref_x;
+              double shift_y=pts_y[i]-ref_y;
+
+              pts_x[i]=(shift_x*cos(0-ref_yaw))-shift_y*(sin(0-ref_yaw));
+              pts_y[i]=(shift_x*sin(0-ref_yaw))+shift_y*(cos(0-ref_yaw));
+            }
+
+            // Using spline to fit the path point to a polynomial
+            tk::spline s;
+
+            // set the points to the spline
+            s.set_points(pts_x,pts_y);
+
+            // assign the actual way points that will be used for the planner
+            for(int i=0;i<previous_path_x.size();i++){
+              next_x_vals.push_back(previous_path_x[i]);
+              next_y_vals.push_back(previous_path_y[i]);
+            }
+
+            double target_x=points_space;
+            double target_y=s(target_x);
+            double target_distance=sqrt(target_x*target_x + target_y*target_y);
+
+            double x_add_on=0;
+
+            for(int i=1;i<50-previous_path_x.size();i++){
+              current_vel+=speed_diff;
+              if(current_vel>MAX_VEL){
+                current_vel=MAX_VEL;
+              }
+              else if(current_vel<MAX_ACC){
+                current_vel=MAX_ACC;
+              }
+              double N=(target_distance/(0.02*current_vel/2.24));
+              double x_point=x_add_on+(target_x)/N;
+              double y_point=s(x_point);
+
+              x_add_on=x_point;
+
+              double x_ref=x_point;
+              double y_ref=y_point;
+
+              // Transfor to road coordinate frame
+              x_point=(x_ref*cos(ref_yaw)-y_ref*sin(ref_yaw));
+              y_point=(x_ref*sin(ref_yaw)+y_ref*(cos(ref_yaw)));
+
+              x_point+=ref_x;
+              y_point+=ref_y;
+
+              next_x_vals.push_back(x_point);
+              next_y_vals.push_back(y_point);
+            }
+
+
+
+            std::vector<char> v;
+
+          /*
+          double pos_x;
+          double pos_y;
+          double angle;
+          int path_size = previous_path_x.size();
+
+          for(int i = 0; i < path_size; i++)
+          {
+              next_x_vals.push_back(previous_path_x[i]);
+              next_y_vals.push_back(previous_path_y[i]);
+          }
+
+          if(path_size == 0)
+          {
+              pos_x = car_x;
+              pos_y = car_y;
+              angle = deg2rad(car_yaw);
+          }
+          else
+          {
+              pos_x = previous_path_x[path_size-1];
+              pos_y = previous_path_y[path_size-1];
+
+              double pos_x2 = previous_path_x[path_size-2];
+              double pos_y2 = previous_path_y[path_size-2];
+              angle = atan2(pos_y-pos_y2,pos_x-pos_x2);
+          }
+
+          double dist_inc = 0.5;
+          for(int i = 0; i < 50-path_size; i++)
+          {    
+              next_x_vals.push_back(pos_x+(dist_inc)*cos(angle+(i+1)*(pi()/100)));
+              next_y_vals.push_back(pos_y+(dist_inc)*sin(angle+(i+1)*(pi()/100)));
+              pos_x += (dist_inc)*cos(angle+(i+1)*(pi()/100));
+              pos_y += (dist_inc)*sin(angle+(i+1)*(pi()/100));
+          }
+          /*
+
+            /*
+            double dist_inc = 0.3;
+            for(int i = 0; i < 50; i++)
+            {
+                  double next_s=car_s+(i+1)*dist_inc;
+                  double next_d=6;
+                  vector<double> xy=getXY(next_s,next_d,map_waypoints_s,map_waypoints_x,map_waypoints_y);
+
+                  next_x_vals.push_back(xy[0]);
+                  next_y_vals.push_back(xy[1]);
+            }
+            */
+
+            // End
+
+            msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
 
           	auto msg = "42[\"control\","+ msgJson.dump()+"]";
